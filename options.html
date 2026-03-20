@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ColorAI — Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <h1>ColorAI</h1>
+        <p class="lead">Provider, keys, and models. Data syncs with Chrome on this profile.</p>
+      </header>
+
+      <form id="form">
+        <section class="card">
+          <h2>Provider</h2>
+          <label class="row">
+            <input type="radio" name="provider" value="ollama" />
+            Local Ollama
+          </label>
+          <label class="row">
+            <input type="radio" name="provider" value="openai" />
+            OpenAI (ChatGPT API)
+          </label>
+          <label class="row">
+            <input type="radio" name="provider" value="gemini" />
+            Google Gemini
+          </label>
+        </section>
+
+        <section class="card" id="panel-ollama">
+          <h2>Ollama</h2>
+          <label class="field">
+            Base URL
+            <input type="url" id="ollamaBaseUrl" placeholder="http://127.0.0.1:11434" autocomplete="off" />
+          </label>
+          <label class="field">
+            Model
+            <select id="ollamaModel" size="1"></select>
+          </label>
+          <div class="row-actions">
+            <button type="button" id="btn-test-ollama" class="btn pill secondary">Test &amp; list models</button>
+            <span id="test-status-ollama" class="inline-status"></span>
+          </div>
+          <p class="hint">
+            Run <code>ollama serve</code> and pull a model, e.g. <code>ollama pull llama3.2</code>. If you get
+            <strong>403</strong>: set <code>OLLAMA_ORIGINS="chrome-extension://*"</code> for Ollama, or run
+            <code>node scripts/colorai-ollama-proxy.mjs</code> and use base URL <code>http://127.0.0.1:11435</code>
+            (see README).
+          </p>
+        </section>
+
+        <section class="card" id="panel-openai">
+          <h2>OpenAI</h2>
+          <label class="field">
+            API key
+            <input type="password" id="openaiApiKey" placeholder="sk-…" autocomplete="off" />
+          </label>
+          <label class="field">
+            Model
+            <select id="openaiModel" size="1"></select>
+          </label>
+          <div class="row-actions">
+            <button type="button" id="btn-test-openai" class="btn pill secondary">Test &amp; list models</button>
+            <span id="test-status-openai" class="inline-status"></span>
+          </div>
+        </section>
+
+        <section class="card" id="panel-gemini">
+          <h2>Gemini</h2>
+          <label class="field">
+            API key
+            <input type="password" id="geminiApiKey" placeholder="AIza…" autocomplete="off" />
+          </label>
+          <label class="field">
+            Model
+            <select id="geminiModel" size="1"></select>
+          </label>
+          <div class="row-actions">
+            <button type="button" id="btn-test-gemini" class="btn pill secondary">Test &amp; list models</button>
+            <span id="test-status-gemini" class="inline-status"></span>
+          </div>
+          <p class="hint">Create a key in Google AI Studio and paste it here.</p>
+        </section>
+
+        <div class="actions">
+          <button type="submit" class="btn pill primary">Save</button>
+          <span id="save-status" class="status"></span>
+        </div>
+      </form>
+    </div>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
