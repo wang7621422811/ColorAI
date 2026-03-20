@@ -36,6 +36,8 @@ function draftFromForm() {
     openaiModel: $("openaiModel").value,
     geminiApiKey: $("geminiApiKey").value.trim(),
     geminiModel: $("geminiModel").value,
+    preferredInstruction: $("preferredInstruction").value,
+    autoAiTabTitles: $("autoAiTabTitles").checked,
   };
 }
 
@@ -132,6 +134,9 @@ async function load() {
   $("openaiApiKey").value = s.openaiApiKey || "";
   $("geminiApiKey").value = s.geminiApiKey || "";
 
+  $("preferredInstruction").value = s.preferredInstruction || "";
+  $("autoAiTabTitles").checked = s.autoAiTabTitles !== false;
+
   populateModelSelect($("ollamaModel"), [], s.ollamaModel || "");
   if (s.ollamaModel) $("ollamaModel").value = s.ollamaModel;
 
@@ -158,6 +163,8 @@ $("form").addEventListener("submit", async (e) => {
     openaiModel: $("openaiModel").value.trim(),
     geminiApiKey: $("geminiApiKey").value.trim(),
     geminiModel: $("geminiModel").value.trim(),
+    preferredInstruction: $("preferredInstruction").value,
+    autoAiTabTitles: $("autoAiTabTitles").checked,
   };
 
   await chrome.storage.sync.set({ [STORAGE_KEY]: next });

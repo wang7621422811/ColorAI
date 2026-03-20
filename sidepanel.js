@@ -1,7 +1,9 @@
 /**
  * ColorAI side panel: multi-session chat (local storage), markdown rendering,
- * selection quote, skills, and collapsible message / summary areas.
+ * selection quote, collapsible skills, and summary notes.
  */
+
+import { mergeSettings } from "./llm.js";
 
 // --- Vendor globals (marked + DOMPurify loaded before this module) ----------
 const g = typeof globalThis !== "undefined" ? globalThis : window;
@@ -25,15 +27,15 @@ const LOCAL_PANEL_KEY = "colorAiLocalPanel";
 
 /**
  * @typedef {{ role: 'user' | 'assistant'; content: string; hint?: string }} ChatMsg
- * @typedef {{ id: string; title: string; messages: ChatMsg[] }} PanelSession
- * @typedef {{ sessions: PanelSession[]; activeId: string; ui: { chatCollapsed: boolean; summaryNotesOpen: boolean } }} PanelState
+ * @typedef {{ id: string; title: string; messages: ChatMsg[]; titleManual?: boolean }} PanelSession
+ * @typedef {{ sessions: PanelSession[]; activeId: string; ui: { skillsOpen: boolean; summaryNotesOpen: boolean } }} PanelState
  */
 
 /** @type {PanelState} */
 let panelState = {
   sessions: [],
   activeId: "",
-  ui: { chatCollapsed: false, summaryNotesOpen: false },
+  ui: { skillsOpen: false, summaryNotesOpen: false },
 };
 
 /** Points at the active session’s `messages` array */
@@ -42,7 +44,8 @@ let chatHistory = [];
 
 async function loadSettings() {
   const data = await chrome.storage.sync.get([STORAGE_KEY, STORAGE_LEGACY]);
-  return data[STORAGE_KEY] || data[STORAGE_LEGACY] || {};
+  const raw = data[STORAGE_KEY] || data[STORAGE_LEGACY] || {};
+  return mergeSettings(raw);
 }
 
 async function saveSettings(partial) {
@@ -126,16 +129,16 @@ async function loadPanelState() {
       sessions: raw.sessions,
       activeId,
       ui: {
-        chatCollapsed: !!raw.ui?.chatCollapsed,
+        skillsOpen: !!raw.ui?.skillsOpen,
         summaryNotesOpen: !!raw.ui?.summaryNotesOpen,
       },
     };
   } else {
     const id = crypto.randomUUID();
     panelState = {
-      sessions: [{ id, title: "New chat", messages: [] }],
+      sessions: [{ id, title: "New chat", messages: [], titleManual: false }],
       activeId: id,
-      ui: { chatCollapsed: false, summaryNotesOpen: false },
+      ui: { skillsOpen: false, summaryNotesOpen: false },
     };
     await persistPanelState();
   }
@@ -148,17 +151,17 @@ async function loadPanelState() {
 }
 
 function applyUiChrome() {
-  const card = document.getElementById("chat-card");
-  const btnChat = document.getElementById("btn-toggle-chat");
+  const skillPanel = document.getElementById("skill-panel");
+  const btnSkills = document.getElementById("btn-toggle-skills");
   const notesPanel = document.getElementById("summary-notes-panel");
   const btnNotes = document.getElementById("btn-toggle-summary-notes");
 
-  if (panelState.ui.chatCollapsed) {
-    card.classList.add("is-chat-collapsed");
-    btnChat.setAttribute("aria-expanded", "false");
+  if (panelState.ui.skillsOpen) {
+    skillPanel.classList.remove("is-collapsed");
+    btnSkills.setAttribute("aria-expanded", "true");
   } else {
-    card.classList.remove("is-chat-collapsed");
-    btnChat.setAttribute("aria-expanded", "true");
+    skillPanel.classList.add("is-collapsed");
+    btnSkills.setAttribute("aria-expanded", "false");
   }
 
   const open = panelState.ui.summaryNotesOpen;
@@ -237,8 +240,129 @@ function renderChat() {
 
 function syncActiveSessionTitle() {
   const s = activeSession();
-  if (!s) return;
+  if (!s || s.titleManual) return;
   s.title = deriveTitle(s.messages);
+}
+
+/**
+ * After an assistant message, refresh tab title via AI when enabled; otherwise derive from first line.
+ */
+async function refreshTabTitleAfterAssistantReply() {
+  const s = activeSession();
+  if (!s || s.titleManual) return;
+  const settings = await loadSettings();
+  if (settings.autoAiTabTitles === false) {
+    syncActiveSessionTitle();
+    renderTabs();
+    await persistPanelState();
+    return;
+  }
+  if (s.messages.length === 0) return;
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: "GENERATE_TAB_TITLE",
+      messages: s.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    if (res?.ok && res.title) {
+      s.title = res.title;
+    } else {
+      syncActiveSessionTitle();
+    }
+  } catch {
+    syncActiveSessionTitle();
+  }
+  renderTabs();
+  await persistPanelState();
+}
+
+async function suggestTabTitleForSession(sessionId) {
+  const s = panelState.sessions.find((x) => x.id === sessionId);
+  if (!s) return;
+  if (s.messages.length === 0) {
+    setStatus("Nothing to name yet.");
+    return;
+  }
+  setStatus("Suggesting title…");
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: "GENERATE_TAB_TITLE",
+      messages: s.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    if (!res?.ok) throw new Error(res?.error || "Title request failed");
+    if (res.title) {
+      s.title = res.title;
+      s.titleManual = false;
+      renderTabs();
+      await persistPanelState();
+    }
+    setStatus("");
+  } catch (e) {
+    setStatus(String(e?.message || e));
+  }
+}
+
+function startTabRename(sessionId) {
+  const tab = document.querySelector(`.session-tab[data-id="${sessionId}"]`);
+  const titleEl = tab?.querySelector(".session-tab-title");
+  if (!titleEl) return;
+  const s = panelState.sessions.find((x) => x.id === sessionId);
+  if (!s) return;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "session-tab-title-input";
+  input.value = s.title;
+  let cancelled = false;
+
+  const finish = () => {
+    if (cancelled) return;
+    const v = input.value.trim();
+    if (v) {
+      s.title = v;
+      s.titleManual = true;
+    }
+    titleEl.textContent = s.title;
+    if (input.parentNode) input.replaceWith(titleEl);
+    void persistPanelState();
+    renderTabs();
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    }
+    if (e.key === "Escape") {
+      cancelled = true;
+      if (input.parentNode) input.replaceWith(titleEl);
+      renderTabs();
+    }
+  });
+  input.addEventListener("blur", finish);
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function hideTabContextMenu() {
+  const menu = document.getElementById("tab-context-menu");
+  menu.classList.add("is-hidden");
+  menu.setAttribute("aria-hidden", "true");
+}
+
+function setTitlebarMenuOpen(open) {
+  const panel = document.getElementById("titlebar-menu-panel");
+  const btn = document.getElementById("btn-titlebar-menu");
+  if (!panel || !btn) return;
+  if (open) {
+    panel.classList.remove("is-hidden");
+    panel.setAttribute("aria-hidden", "false");
+    btn.setAttribute("aria-expanded", "true");
+  } else {
+    panel.classList.add("is-hidden");
+    panel.setAttribute("aria-hidden", "true");
+    btn.setAttribute("aria-expanded", "false");
+  }
 }
 
 async function getActiveBrowserTabId() {
@@ -310,16 +434,17 @@ async function sendChat() {
     });
     if (!res?.ok) throw new Error(res?.error || "Request failed");
     chatHistory.push({ role: "assistant", content: res.text });
-    syncActiveSessionTitle();
     renderChat();
     await persistPanelState();
-    renderTabs();
+    await refreshTabTitleAfterAssistantReply();
     setStatus("");
   } catch (e) {
     setStatus(String(e?.message || e));
     chatHistory.push({ role: "assistant", content: `Error: ${String(e?.message || e)}` });
+    syncActiveSessionTitle();
     renderChat();
     await persistPanelState();
+    renderTabs();
   }
 }
 
@@ -337,16 +462,17 @@ async function summarizePage() {
     const header = res.meta ? `**${res.meta.title}**\n${res.meta.url}\n\n` : "";
     const full = header + res.text;
     chatHistory.push({ role: "assistant", content: full });
-    syncActiveSessionTitle();
     renderChat();
     await persistPanelState();
-    renderTabs();
+    await refreshTabTitleAfterAssistantReply();
     setStatus("");
   } catch (e) {
     setStatus(String(e?.message || e));
     chatHistory.push({ role: "assistant", content: `Error: ${String(e?.message || e)}` });
+    syncActiveSessionTitle();
     renderChat();
     await persistPanelState();
+    renderTabs();
   }
 }
 
@@ -362,7 +488,7 @@ function switchSession(id) {
 
 async function createSession() {
   const id = crypto.randomUUID();
-  panelState.sessions.push({ id, title: "New chat", messages: [] });
+  panelState.sessions.push({ id, title: "New chat", messages: [], titleManual: false });
   panelState.activeId = id;
   chatHistory = panelState.sessions[panelState.sessions.length - 1].messages;
   document.getElementById("input").value = "";
@@ -377,7 +503,7 @@ async function closeSession(id) {
   panelState.sessions.splice(idx, 1);
   if (panelState.sessions.length === 0) {
     const nid = crypto.randomUUID();
-    panelState.sessions.push({ id: nid, title: "New chat", messages: [] });
+    panelState.sessions.push({ id: nid, title: "New chat", messages: [], titleManual: false });
     panelState.activeId = nid;
     chatHistory = panelState.sessions[0].messages;
   } else if (panelState.activeId === id) {
@@ -385,6 +511,7 @@ async function closeSession(id) {
     panelState.activeId = next.id;
     chatHistory = next.messages;
   }
+  hideTabContextMenu();
   renderTabs();
   renderChat();
   await persistPanelState();
@@ -408,10 +535,75 @@ document.getElementById("btn-new-session").addEventListener("click", () => {
   void createSession();
 });
 
-document.getElementById("btn-toggle-chat").addEventListener("click", () => {
-  panelState.ui.chatCollapsed = !panelState.ui.chatCollapsed;
+document.getElementById("btn-toggle-skills").addEventListener("click", () => {
+  panelState.ui.skillsOpen = !panelState.ui.skillsOpen;
   applyUiChrome();
   void persistPanelState();
+});
+
+document.getElementById("session-tab-list").addEventListener("dblclick", (e) => {
+  const title = e.target.closest(".session-tab-title");
+  if (!title) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const id = title.closest(".session-tab")?.getAttribute("data-id");
+  if (id) startTabRename(id);
+});
+
+let tabContextSessionId = null;
+
+document.getElementById("session-tab-list").addEventListener("contextmenu", (e) => {
+  const closeBtn = e.target.closest(".session-tab-close");
+  if (closeBtn) return;
+  const tab = e.target.closest(".session-tab");
+  if (!tab) return;
+  e.preventDefault();
+  const id = tab.getAttribute("data-id");
+  if (!id) return;
+  tabContextSessionId = id;
+  setTitlebarMenuOpen(false);
+  const menu = document.getElementById("tab-context-menu");
+  menu.classList.remove("is-hidden");
+  menu.setAttribute("aria-hidden", "false");
+  const pad = 8;
+  const mw = menu.offsetWidth || 168;
+  const mh = menu.offsetHeight || 72;
+  const x = Math.min(e.clientX, window.innerWidth - mw - pad);
+  const y = Math.min(e.clientY, window.innerHeight - mh - pad);
+  menu.style.left = `${Math.max(pad, x)}px`;
+  menu.style.top = `${Math.max(pad, y)}px`;
+});
+
+document.getElementById("tab-context-menu").addEventListener("click", (e) => {
+  const item = e.target.closest("[data-action]");
+  const action = item?.getAttribute("data-action");
+  if (!action || !tabContextSessionId) return;
+  e.stopPropagation();
+  const id = tabContextSessionId;
+  hideTabContextMenu();
+  if (action === "rename") startTabRename(id);
+  if (action === "ai-title") void suggestTabTitleForSession(id);
+});
+
+document.getElementById("btn-titlebar-menu")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  hideTabContextMenu();
+  const panel = document.getElementById("titlebar-menu-panel");
+  if (!panel) return;
+  setTitlebarMenuOpen(panel.classList.contains("is-hidden"));
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#tab-context-menu")) return;
+  hideTabContextMenu();
+  if (e.target.closest("#btn-titlebar-menu")) return;
+  setTitlebarMenuOpen(false);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  hideTabContextMenu();
+  setTitlebarMenuOpen(false);
 });
 
 document.getElementById("btn-toggle-summary-notes").addEventListener("click", () => {
@@ -421,6 +613,8 @@ document.getElementById("btn-toggle-summary-notes").addEventListener("click", ()
 });
 
 document.getElementById("btn-reload").addEventListener("click", async () => {
+  const cur = activeSession();
+  if (cur) cur.titleManual = false;
   chatHistory.length = 0;
   document.getElementById("input").value = "";
   document.getElementById("summarize-extra").value = "";

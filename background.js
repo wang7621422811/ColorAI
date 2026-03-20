@@ -145,11 +145,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (skill?.systemPrompt?.trim()) {
           msgs.push({ role: "system", content: skill.systemPrompt.trim() });
         }
+        const pref = String(settings.preferredInstruction || "").trim();
+        if (pref) {
+          msgs.push({ role: "system", content: pref });
+        }
         for (const m of message.messages || []) {
           msgs.push({ role: m.role, content: m.content });
         }
         const text = await completeChat(msgs, settings);
         safeSend(sendResponse, { ok: true, text });
+        return;
+      }
+
+      if (message?.type === "GENERATE_TAB_TITLE") {
+        const settings = await loadSettings();
+        const raw = Array.isArray(message.messages) ? message.messages : [];
+        const lines = [];
+        for (const m of raw.slice(-8)) {
+          const role = m?.role === "assistant" ? "assistant" : "user";
+          const content = String(m?.content || "").trim().slice(0, 2_500);
+          if (content) lines.push(`${role}: ${content}`);
+        }
+        const transcript = lines.join("\n\n");
+        if (!transcript) {
+          safeSend(sendResponse, { ok: false, error: "No messages to name." });
+          return;
+        }
+        const system =
+          "You write very short UI tab titles for a chat app. Reply with ONLY the title text: max 6 words, no quotes, no punctuation at the end, describe the main topic. If the chat is empty or unclear, reply: Chat";
+        const text = await completeChat(
+          [
+            { role: "system", content: system },
+            { role: "user", content: `Conversation:\n${transcript}` },
+          ],
+          settings
+        );
+        let title = String(text || "")
+          .trim()
+          .replace(/^["'«»]|["'«»]$/g, "")
+          .replace(/\s+/g, " ")
+          .slice(0, 48);
+        if (!title) title = "Chat";
+        safeSend(sendResponse, { ok: true, title });
         return;
       }
 
@@ -172,10 +209,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const extra = (message.extraInstructions || "").trim();
+        const pref = String(settings.preferredInstruction || "").trim();
         const system = [
           "You summarize web pages clearly and concisely.",
           "Use markdown: short title line, then bullet points for key ideas.",
           "If the excerpt seems truncated, mention that briefly.",
+          pref ? `User default preferences: ${pref}` : "",
           extra ? `User instructions: ${extra}` : "",
         ]
           .filter(Boolean)

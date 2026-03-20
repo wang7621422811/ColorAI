@@ -68,6 +68,23 @@
           </div>
         </section>
 
+        <section class="card">
+          <h2>Chat behavior</h2>
+          <label class="field">
+            Preferred instruction
+            <textarea
+              id="preferredInstruction"
+              rows="3"
+              placeholder="Optional. Treated as an extra system message on every chat (tone, language, format)…"
+              autocomplete="off"
+            ></textarea>
+          </label>
+          <label class="row checkbox-row">
+            <input type="checkbox" id="autoAiTabTitles" />
+            Auto-generate conversation tab titles with AI after replies
+          </label>
+        </section>
+
         <section class="card" id="panel-gemini">
           <h2>Gemini</h2>
           <label class="field">

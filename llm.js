@@ -14,6 +14,10 @@ const DEFAULT_SETTINGS = {
   openaiModel: "gpt-4o-mini",
   geminiApiKey: "",
   geminiModel: "gemini-2.0-flash",
+  /** Optional system text applied to every chat (after skill system prompt). */
+  preferredInstruction: "",
+  /** When true, suggest short tab titles via the model after replies. */
+  autoAiTabTitles: true,
 };
 
 /**
